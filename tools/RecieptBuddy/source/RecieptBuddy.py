@@ -1,4 +1,4 @@
-import os,sys
+import os,sys,pprint,json
 
 sys.path.append(os.environ.get('PS_SITEPACKAGES'))
 from PictureShop2.Shared import StyleUtils
@@ -27,8 +27,88 @@ BillTo = {
 
 
 ################################################################################
+# Dialogs
+################################################################################
+class RecieptCreator(QtWidgets.QDialog):
+	createClicked = QtCore.Signal(dict)
+	def __init__(self, recieptDir, **kwargs):
+		super(RecieptCreator,self).__init__(parent = kwargs.get('parent'))
+		self.setWindowTitle("Reciept Creator")
+
+		self.lblDate = QtWidgets.QLabel('Date:')
+		self.uiDate = QtWidgets.QDateEdit()
+		self.lblStoreName = QtWidgets.QLabel('Store Name:')
+		self.uiStoreName = QtWidgets.QLineEdit()
+		self.uiCreate = QtWidgets.QPushButton('Create')
+		self.uiCancel = QtWidgets.QPushButton('Cancel')
+
+		self.uiDate.setCalendarPopup(True)
+		self.uiDate.setDate(QtCore.QDate.currentDate())
+
+		self.layMain = QtWidgets.QVBoxLayout()
+		self.laySettings = QtWidgets.QHBoxLayout()
+		self.layOperators = QtWidgets.QHBoxLayout()
+
+		self.layMain.addLayout(self.laySettings)
+		self.layMain.addLayout(self.layOperators)
+
+		self.laySettings.addWidget(self.lblDate)
+		self.laySettings.addWidget(self.uiDate)
+		self.laySettings.addWidget(self.lblStoreName)
+		self.laySettings.addWidget(self.uiStoreName)
+
+		self.layOperators.addStretch()
+		self.layOperators.addWidget(self.uiCreate)
+		self.layOperators.addWidget(self.uiCancel)
+
+		self.setLayout(self.layMain)
+
+		self.uiCancel.clicked.connect(self.reject)
+		self.uiStoreName.textEdited.connect(self.verifyInputs)
+		self.uiDate.dateChanged.connect(self.verifyInputs)
+		self.uiCreate.clicked.connect(self.createReciept)
+
+		self.verifyInputs()
+
+	def verifyInputs(self):
+		storeName = self.uiStoreName.text()
+		for char in '!@#$%^&*()_+=-[]}{:";,>.</?\\|':
+			storeName = storeName.replace(char,'')
+		storeName = storeName.replace(' ','-')
+		
+		if storeName != '':
+			self.storeName = storeName
+			self.uiCreate.setEnabled(True)
+		else:
+			self.uiCreate.setEnabled(False)
+
+		pprint.pprint(dir(self.uiDate.dateTime().date()))
+		day,month,year = (
+			self.uiDate.dateTime().date().month(),
+			self.uiDate.dateTime().date().day(),
+			self.uiDate.dateTime().date().year()
+		)
+
+		self.date = '-'.join([str(day),str(month),str(year)])
+
+
+	def createReciept(self):
+		data = {}
+		data['date'] = self.date
+		data['storeName'] = self.storeName
+
+		self.createClicked.emit(data)
+		self.accept()
+
+
+################################################################################
 # Widgets
 ################################################################################
+class MoneySpinner(QtWidgets.QWidget):
+	def __init__(self):
+		super(MoneySpinner,self).__init__()
+
+
 class GroceryItemWidget(QtWidgets.QWidget):
 	itemUpdated = QtCore.Signal(str)
 	def __init__(self,**kwargs):
@@ -125,6 +205,12 @@ class RecieptBuddy_ItemList(QtWidgets.QWidget):
 		self.rootItems = {}
 		self.taxRate = 0
 
+		# data
+		self.RecieptDir = os.path.join(os.environ.get('ArletaHouse'),'tools','recieptBuddy','source','lib','reciepts')
+		if not os.path.isdir(self.RecieptDir):
+			os.makedirs(self.RecieptDir)
+
+		# widget creation
 		self.uiRecieptSelector = QtWidgets.QComboBox()
 		self.uiPayTo = QtWidgets.QComboBox()
 		self.uiTaxRate = QtWidgets.QLineEdit()
@@ -167,6 +253,43 @@ class RecieptBuddy_ItemList(QtWidgets.QWidget):
 
 		self.uiItemTemplate.itemUpdated.connect(self.verifyTemplate)
 		self.uiAddItem.clicked.connect(self.addItem)
+		self.uiRecieptSelector.currentIndexChanged.connect(self.openReciept)
+
+		self.populateReciepts()
+
+
+	def openReciept(self):
+		if self.uiRecieptSelector.currentText() == 'New Reciept':
+			creator = RecieptCreator(self.RecieptDir, parent = self)
+			creator.createClicked.connect(self.createNewReciept)
+			creator.exec_()
+
+	def createNewReciept(self, data):
+		data['taxRate'] = self.uiTaxRate.text()
+		data['payableTo'] = self.uiPayTo.currentText()
+		data['items'] = []
+
+		filename = '_'.join([data['date'],data['storeName']])
+
+		jsonFile = os.path.join(self.RecieptDir,filename + '.reciept')
+
+		with open(jsonFile,'w') as jFile:
+			json.dump(data, jFile, ensure_ascii=False, indent=4)
+
+		self.populateReciepts()
+		self.uiRecieptSelector.setCurrentIndex(self.uiRecieptSelector.findText(filename + '.reciept'))
+
+
+	def populateReciepts(self):
+		self.uiRecieptSelector.clear()
+		files = os.listdir(self.RecieptDir)
+		files.sort()
+		files.reverse()
+
+		self.uiRecieptSelector.addItem('')
+		self.uiRecieptSelector.addItems(files)
+		self.uiRecieptSelector.addItem('New Reciept')
+
 
 
 	def verifyTemplate(self):
@@ -181,8 +304,9 @@ class RecieptBuddy_ItemList(QtWidgets.QWidget):
 		self.uiAddItem.setEnabled(valid)
 
 
-	def addItem(self):
-		itemData = self.uiItemTemplate.getData()
+	def addItem(self, itemData = None):
+		if data is None:
+			itemData = self.uiItemTemplate.getData()
 
 		itemTotal = float(itemData['itemPrice']) + float(itemData['itemCrv']) + (float(itemData['itemPrice'])*self.taxRate)
 
