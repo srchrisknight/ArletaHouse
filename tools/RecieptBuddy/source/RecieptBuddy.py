@@ -1,8 +1,9 @@
 import os,sys,pprint,json
-
-sys.path.append(os.environ.get('PS_SITEPACKAGES'))
-from PictureShop2.Shared import StyleUtils
-
+from inspect import getsourcefile
+sys.path.append(os.path.dirname(os.path.abspath(getsourcefile(lambda:0))))
+sys.path.append(os.path.join(os.environ.get('ArletaHouse'),'site-packages'))
+from Shared import StyleUtils
+import RecieptParser
 from Qt import QtWidgets,QtCore,QtGui
 
 
@@ -24,6 +25,72 @@ BillTo = {
 	'F':'Family (Arleta House)',
 	'Misc': 'Other'
 }
+
+
+################################################################################
+# Items
+################################################################################
+class GroceryTreeItem(QtWidgets.QTreeWidgetItem):
+	def __init__(self, *args, **kwargs):
+		super(GroceryTreeItem,self).__init__(*args)
+		self.parentWidget = kwargs.get('parentWidget')
+		self.itemData = kwargs.get('itemData')
+		self.hasNote = False
+		if self.itemData['itemNote'] != '':
+			self.hasNote = True
+			self.setIcon(0,StyleUtils.getIcon('alert-triangle-orange'))
+
+		self.parentWidget.taxUpdated.connect(self.updateTotal)
+
+		labels = [
+				self.itemData['itemName'],
+				self.itemData['itemPrice'],
+				self.itemData['itemCrv'],
+				str(self.itemData['itemTaxable']),
+				str(0),
+				str(self.itemData['itemTotal']),
+				self.itemData['billTo']
+			]
+
+		for i in range(len(labels)):
+			self.setText(i,labels[i])
+
+		self.updateTotal()
+
+	def setNote(self, note):
+		if note != '':
+			self.hasNote = True
+			self.itemData['itemNote'] = note
+			self.setIcon(0,StyleUtils.getIcon('alert-triangle-orange'))
+		else:
+			self.itemData['itemNote'] = ''
+			self.setIcon(0,QtGui.QIcon())
+
+
+	def updateTotal(self):
+		print 'updating'
+		price = float(self.itemData['itemPrice'])
+		crv = float(self.itemData['itemCrv'])
+
+		taxRate = self.parentWidget.taxRate
+		print '{} taxible: {}'.format(self.itemData['itemName'],self.itemData['itemTaxable'])
+		if str(self.itemData['itemTaxable']) == 'True':
+			print 'running'
+			taxMultiplier = 1 + (taxRate/100.0)
+			print taxMultiplier
+
+
+			total = (price + crv) * taxMultiplier
+			tax = total - (price + crv)
+			self.setText(5,str(round(total,2)))
+			self.setText(4,str(round(tax,2)))
+		else:
+			total = price + crv
+			self.setText(5,str(total))
+			self.setText(4,str(0))
+
+
+
 
 
 ################################################################################
@@ -82,7 +149,6 @@ class RecieptCreator(QtWidgets.QDialog):
 		else:
 			self.uiCreate.setEnabled(False)
 
-		pprint.pprint(dir(self.uiDate.dateTime().date()))
 		day,month,year = (
 			self.uiDate.dateTime().date().month(),
 			self.uiDate.dateTime().date().day(),
@@ -100,19 +166,99 @@ class RecieptCreator(QtWidgets.QDialog):
 		self.createClicked.emit(data)
 		self.accept()
 
+class ItemEditorDialog(QtWidgets.QDialog):
+	def __init__(self,**kwargs):
+		super(ItemEditorDialog,self).__init__(parent = kwargs.get('parent'))
+		self.setWindowTitle('Grocery Item Editor')
+		self.resize(600,100)
+
+		# data
+		self.listItem = kwargs.get('listItem')
+
+		# widget creation
+		self.uiItemTemplate = GroceryItemWidget()
+		self.uiCommit = QtWidgets.QPushButton('Commit')
+		self.uiCancel = QtWidgets.QPushButton('Cancel')
+
+		# widgetSettings
+		self.uiItemTemplate.setData(self.listItem.itemData)
+
+		# layout creation
+		self.layMain = QtWidgets.QVBoxLayout()
+		self.layOperators = QtWidgets.QHBoxLayout()
+
+		# layout settings
+		self.layOperators.addStretch()
+		self.layOperators.addWidget(self.uiCommit)
+		self.layOperators.addWidget(self.uiCancel)
+
+		self.layMain.addWidget(self.uiItemTemplate)
+		self.layMain.addLayout(self.layOperators)
+
+		# layout assignment
+		self.setLayout(self.layMain)
+
+		# signals
+		self.uiCancel.clicked.connect(self.reject)
+		self.uiCommit.clicked.connect(self.acceptChanges)
+
+	def acceptChanges(self):
+		itemData = self.uiItemTemplate.getData()
+		print itemData
+		self.parent().addItem(itemData = self.uiItemTemplate.getData())
+		self.parent().removeItem(listItem = self.listItem)
+		self.accept()
+
+class NoteEditor(QtWidgets.QDialog):
+	def __init__(self,**kwargs):
+		super(NoteEditor,self).__init__(parent = kwargs.get('parent'))
+		self.setWindowTitle('Note Editor')
+		self.resize(400,400)
+
+		# data
+		noteData = kwargs.get('noteData','')
+
+		# widget creation
+		self.uiNote = QtWidgets.QTextEdit()
+		self.uiCommit = QtWidgets.QPushButton(StyleUtils.getIcon('check'),'Commit')
+		self.uiCancel = QtWidgets.QPushButton(StyleUtils.getIcon('close'),'Cancel')
+
+		# widgetSettings
+		self.uiNote.setText(noteData)
+
+		# layout creation
+		self.layMain = QtWidgets.QVBoxLayout()
+		self.layOperators = QtWidgets.QHBoxLayout()
+
+		# lay settings
+		self.layOperators.addStretch()
+		self.layOperators.addWidget(self.uiCommit)
+		self.layOperators.addWidget(self.uiCancel)
+
+		self.layMain.addWidget(self.uiNote)
+		self.layMain.addLayout(self.layOperators)
+
+		# layout assignment
+		self.setLayout(self.layMain)
+
+		# signals
+		self.uiCancel.clicked.connect(self.reject)
+		self.uiCommit.clicked.connect(self.updateNote)
+
+	def updateNote(self):
+		self.parent().setNote(self.uiNote.toPlainText())
+		self.parent().itemUpdated.emit('')
+		self.accept()
+
 
 ################################################################################
 # Widgets
 ################################################################################
-class MoneySpinner(QtWidgets.QWidget):
-	def __init__(self):
-		super(MoneySpinner,self).__init__()
-
-
 class GroceryItemWidget(QtWidgets.QWidget):
 	itemUpdated = QtCore.Signal(str)
 	def __init__(self,**kwargs):
 		super(GroceryItemWidget,self).__init__()
+		self.note = ''
 
 		# Data
 		self.billingActions = []
@@ -121,13 +267,14 @@ class GroceryItemWidget(QtWidgets.QWidget):
 		self.lblItemName = QtWidgets.QLabel('Item Name:')
 		self.uiItemName = QtWidgets.QLineEdit()
 		self.lblPrice = QtWidgets.QLabel('Price:')
-		self.uiPrice = QtWidgets.QLineEdit()
+		self.uiPrice = QtWidgets.QDoubleSpinBox()
 		self.lblCRV = QtWidgets.QLabel('CRV:')
-		self.uiCRV = QtWidgets.QLineEdit()		
+		self.uiCRV = QtWidgets.QDoubleSpinBox()		
 		self.uiBillTo = QtWidgets.QPushButton('Add Bill Recipient:')
 		self.uiBillToMenu = QtWidgets.QMenu()
 		self.lblBillist = QtWidgets.QLabel()
 		self.uiTaxable = QtWidgets.QCheckBox('Taxable')
+		self.uiEditNote = QtWidgets.QPushButton()
 
 		# Widget settings
 		self.uiBillTo.setMenu(self.uiBillToMenu)
@@ -137,6 +284,8 @@ class GroceryItemWidget(QtWidgets.QWidget):
 			action.triggered.connect(self.updateBillToList)
 			self.uiBillToMenu.addAction(action)
 			self.billingActions.append(action)
+		self.uiEditNote.setIcon(StyleUtils.getIcon('edit'))
+		self.uiEditNote.setToolTip('View/Edit Notes')
 
 		# Layout Creation
 		self.layMain = QtWidgets.QHBoxLayout()
@@ -150,24 +299,36 @@ class GroceryItemWidget(QtWidgets.QWidget):
 			self.uiCRV,
 			self.uiTaxable,
 			self.uiBillTo,
-			self.lblBillist
+			self.lblBillist,
+			self.uiEditNote
 		]:
 			self.layMain.addWidget(widge)
 
 		self.setLayout(self.layMain)
 
 		self.uiItemName.textEdited.connect(self.itemUpdated.emit)
-		self.uiPrice.textEdited.connect(self.itemUpdated.emit)
-		self.uiCRV.textEdited.connect(self.itemUpdated.emit)
+		self.uiPrice.valueChanged.connect(self.itemUpdated.emit)
+		self.uiCRV.valueChanged.connect(self.itemUpdated.emit)
 		self.uiTaxable.stateChanged.connect(self.itemUpdated.emit)
+		self.uiEditNote.clicked.connect(self.addNote)
+
+
+	def addNote(self):
+		noteEditor = NoteEditor(noteData = self.note, parent = self)
+		noteEditor.exec_()
+
+
+	def setNote(self,note):
+		self.note = note
 
 
 	def clear(self):
 		self.uiItemName.clear()
-		self.uiPrice.clear()
-		self.uiCRV.clear()
+		self.uiPrice.setValue(0)
+		self.uiCRV.setValue(0)
 		self.uiTaxable.setChecked(False)
 		self.lblBillist.setText('')
+		self.note = ''
 
 		for action in self.billingActions:
 			action.setChecked(False)
@@ -187,23 +348,45 @@ class GroceryItemWidget(QtWidgets.QWidget):
 		self.lblBillist.setText(billList)
 		self.itemUpdated.emit('')
 
+
 	def getData(self):
 		data = {
 			'itemName':self.uiItemName.text(),
-			'itemPrice':self.uiPrice.text(),
-			'itemCrv':self.uiCRV.text(),
+			'itemPrice':str(self.uiPrice.value()),
+			'itemCrv':str(self.uiCRV.value()),
 			'itemTaxable':self.uiTaxable.isChecked(),
-			'billTo':self.lblBillist.text()
+			'billTo':self.lblBillist.text(),
+			'itemNote':self.note
 		}
 
 		return data
 
-class RecieptBuddy_ItemList(QtWidgets.QWidget):
+	def setData(self,data):
+		self.uiItemName.setText(data['itemName'])
+		self.uiPrice.setValue(float(data['itemPrice']))
+		self.uiCRV.setValue(float(data['itemCrv']))
+		self.uiTaxable.setChecked(str(data['itemTaxable']) == 'True')
+
+		for initials in data['billTo'].split('/'):
+			for action in self.billingActions:
+				if action.text() == BillTo[initials]:
+					action.setChecked(True)
+
+		self.updateBillToList()
+
+
+
+class RecieptBuddy_RecieptManager(QtWidgets.QWidget):
+	recieptOpened = QtCore.Signal()
 	recieptUpdated = QtCore.Signal()
+	taxUpdated = QtCore.Signal()
+	itemUpdated = QtCore.Signal(str)
 	def __init__(self):
-		super(RecieptBuddy_ItemList,self).__init__()
+		super(RecieptBuddy_RecieptManager,self).__init__()
 		self.rootItems = {}
-		self.taxRate = 0
+		self.taxRate = 9.5
+		self.recieptItems = []
+		self.currentItem = None
 
 		# data
 		self.RecieptDir = os.path.join(os.environ.get('ArletaHouse'),'tools','recieptBuddy','source','lib','reciepts')
@@ -213,18 +396,22 @@ class RecieptBuddy_ItemList(QtWidgets.QWidget):
 		# widget creation
 		self.uiRecieptSelector = QtWidgets.QComboBox()
 		self.uiPayTo = QtWidgets.QComboBox()
-		self.uiTaxRate = QtWidgets.QLineEdit()
+		self.uiTaxRate = QtWidgets.QDoubleSpinBox()
 		self.uiGroceryTreeWidget = QtWidgets.QTreeWidget()
 		self.uiTemplateGroup = QtWidgets.QGroupBox('Item Template')
 		self.uiItemTemplate = GroceryItemWidget()
 		self.uiAddItem = QtWidgets.QPushButton(StyleUtils.getIcon('add'),'Add Item')
 
 		# widget settings
+		self.uiTaxRate.setValue(9.5)
+		self.uiTemplateGroup.setSizePolicy(QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Maximum))
+		self.uiGroceryTreeWidget.setSizePolicy(QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding))
 		for k in sorted(BillTo.keys()):
 			self.uiPayTo.addItem(BillTo[k])
 		self.uiAddItem.setEnabled(False)
-		self.uiGroceryTreeWidget.setHeaderLabels(['Item Name', 'Item Price','CRV','Taxable','Item Total','Bill To'])
-		# self.uiRecieptSelector.addItems(['None','Create New'])
+		self.uiGroceryTreeWidget.setHeaderLabels(['Item Name', 'Item Price','CRV','Taxable','Tax','Subtotal','Bill To'])
+		self.uiGroceryTreeWidget.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+		self.uiGroceryTreeWidget.customContextMenuRequested.connect(self.groceryTreeMenuRequested)
 
 		#Layout Construction
 		self.layMain = QtWidgets.QVBoxLayout()
@@ -233,9 +420,6 @@ class RecieptBuddy_ItemList(QtWidgets.QWidget):
 		self.layOperators = QtWidgets.QHBoxLayout()
 
 		#layout settings
-		self.layMain.addLayout(self.layForm)
-		self.layMain.addWidget(self.uiTemplateGroup)
-
 		self.layTemplate.addWidget(self.uiItemTemplate)
 		self.layTemplate.addLayout(self.layOperators)
 
@@ -245,7 +429,11 @@ class RecieptBuddy_ItemList(QtWidgets.QWidget):
 		self.layForm.addRow('Reciept:',self.uiRecieptSelector)
 		self.layForm.addRow('Pay To:',self.uiPayTo)
 		self.layForm.addRow('Tax Rate:',self.uiTaxRate)
-		self.layForm.addRow('Items:',self.uiGroceryTreeWidget)
+		# self.layForm.addRow('Items:',self.uiGroceryTreeWidget)
+
+		self.layMain.addLayout(self.layForm)
+		self.layMain.addWidget(self.uiGroceryTreeWidget)
+		self.layMain.addWidget(self.uiTemplateGroup)
 
 		# layout application
 		self.setLayout(self.layMain)
@@ -254,15 +442,83 @@ class RecieptBuddy_ItemList(QtWidgets.QWidget):
 		self.uiItemTemplate.itemUpdated.connect(self.verifyTemplate)
 		self.uiAddItem.clicked.connect(self.addItem)
 		self.uiRecieptSelector.currentIndexChanged.connect(self.openReciept)
+		self.uiTaxRate.valueChanged.connect(self.updateTaxRate)
+		self.uiTaxRate.valueChanged.connect(self.updateRecieptFile)
+		self.uiPayTo.currentIndexChanged.connect(self.updateRecieptFile)
+		self.recieptUpdated.connect(self.updateRecieptFile)
 
 		self.populateReciepts()
 
+	def groceryTreeMenuRequested(self,point):
+		treeItem = self.uiGroceryTreeWidget.itemAt(point)
+
+		if treeItem is None:
+			return None
+
+		if treeItem.text(1) == '':
+			return None
+
+		self.currentItem = treeItem
+
+		menu = QtWidgets.QMenu(parent = self)
+
+		actEditItem = QtWidgets.QAction('Edit Item',self)
+		actRemoveItem = QtWidgets.QAction('Remove Item',self)
+		actAddNote = QtWidgets.QAction('View/Edit Note',self)
+		actClearNotes = QtWidgets.QAction('Clear Notes',self)
+
+		menu.addAction(actEditItem)
+		menu.addAction(actRemoveItem)
+		menu.addSeparator()
+		menu.addAction(actAddNote)
+		menu.addAction(actClearNotes)
+
+		actRemoveItem.triggered.connect(self.removeItem)
+		actEditItem.triggered.connect(self.editItem)
+		actAddNote.triggered.connect(self.addNoteToCurrentItem)
+		actClearNotes.triggered.connect(self.clearCurrentItemNotes)
+
+		menu.exec_(self.uiGroceryTreeWidget.mapToGlobal(point))
+
+
+	def updateTaxRate(self):
+		self.taxRate = self.uiTaxRate.value()
+		self.taxUpdated.emit()
+
 
 	def openReciept(self):
+		self.currentReciept = os.path.join(self.RecieptDir,self.uiRecieptSelector.currentText())
+		self.rootItems = {}
+		self.uiGroceryTreeWidget.clear()
+		self.recieptItems = []
+
 		if self.uiRecieptSelector.currentText() == 'New Reciept':
 			creator = RecieptCreator(self.RecieptDir, parent = self)
 			creator.createClicked.connect(self.createNewReciept)
 			creator.exec_()
+
+		elif self.uiRecieptSelector.currentText() == '':
+			self.uiTemplateGroup.setEnabled(False)
+			self.currentReciept = None
+
+
+		else:
+			self.uiTemplateGroup.setEnabled(True)
+
+			with open(self.currentReciept,'r') as jFile:
+				data = json.load(jFile)
+
+			for listItem in data['items']:
+				self.addItem(itemData = listItem)
+
+			self.uiTaxRate.setValue(float(data['taxRate']))
+			self.taxRate = float(data['taxRate'])
+			self.uiPayTo.setCurrentIndex(self.uiPayTo.findText(data['payableTo']))
+
+		self.recieptOpened.emit()
+
+
+
 
 	def createNewReciept(self, data):
 		data['taxRate'] = self.uiTaxRate.text()
@@ -283,58 +539,127 @@ class RecieptBuddy_ItemList(QtWidgets.QWidget):
 	def populateReciepts(self):
 		self.uiRecieptSelector.clear()
 		files = os.listdir(self.RecieptDir)
-		files.sort()
-		files.reverse()
+		filteredFiles = []
+		for file in files:
+			if '.reciept' in file:
+				filteredFiles.append(file)
+
+		filteredFiles.sort()
+		filteredFiles.reverse()
 
 		self.uiRecieptSelector.addItem('')
-		self.uiRecieptSelector.addItems(files)
+		self.uiRecieptSelector.addItems(filteredFiles)
 		self.uiRecieptSelector.addItem('New Reciept')
-
 
 
 	def verifyTemplate(self):
 		data = self.uiItemTemplate.getData()
-		print data
 
 		valid = True
 		for k in data.keys():
-			if data[k] == '':
-				valid = False
+			if k != 'itemNote':
+				if data[k] == '':
+					valid = False
 
 		self.uiAddItem.setEnabled(valid)
 
 
+	def clearCurrentItemNotes(self):
+		self.currentItem.setNote('')
+		self.updateRecieptFile()
+
+
+	def addNoteToCurrentItem(self):
+		noteEditor = NoteEditor(noteData = self.currentItem.itemData['itemNote'], parent = self)
+		noteEditor.exec_()
+
+
+	def setNote(self,note):
+		self.currentItem.setNote(note)
+		self.updateRecieptFile()
+
+
+	def editItem(self):
+		if self.currentItem is None:
+			return None
+
+		print self.currentItem.itemData
+		uiItemEditor = ItemEditorDialog(listItem = self.currentItem, parent = self)
+		uiItemEditor.exec_()
+
+
+	def removeItem(self,listItem = None):
+		if listItem is not None:
+			item = listItem
+		else:
+			item = self.currentItem
+
+		if item is not None:
+			item.parent().removeChild(item)
+
+		for i in range(len(self.recieptItems)):
+			if self.recieptItems[i].text(1) != '':
+				if self.recieptItems[i].itemData == item.itemData:
+					self.recieptItems.pop(i)
+					break
+
+
+		self.updateRecieptFile()
+
+
 	def addItem(self, itemData = None):
-		if data is None:
+		if itemData is None:
 			itemData = self.uiItemTemplate.getData()
 
 		itemTotal = float(itemData['itemPrice']) + float(itemData['itemCrv']) + (float(itemData['itemPrice'])*self.taxRate)
+		itemData['itemTotal'] = itemTotal
 
 		if itemData['billTo'] not in self.rootItems.keys():
 			self.createRootItem(itemData['billTo'])
-			labels = [
-				itemData['itemName'],
-				itemData['itemPrice'],
-				itemData['itemCrv'],
-				str(itemData['itemTaxable']),
-				str(itemTotal),
-				itemData['billTo']
-			]
-			newItem = QtWidgets.QTreeWidgetItem(self.rootItems[itemData['billTo']],labels)			
+			newItem = GroceryTreeItem(self.rootItems[itemData['billTo']],itemData = itemData, parentWidget = self)	
+			self.uiGroceryTreeWidget.setItemSelected(newItem,True)
+			self.recieptItems.append(newItem)		
 
 		else:
-			labels = [
-				itemData['itemName'],
-				itemData['itemPrice'],
-				itemData['itemCrv'],
-				str(itemData['itemTaxable']),
-				str(itemTotal),
-				itemData['billTo']
-			]
-			newItem = QtWidgets.QTreeWidgetItem(self.rootItems[itemData['billTo']],labels)
+			newItem = GroceryTreeItem(self.rootItems[itemData['billTo']],itemData = itemData, parentWidget = self)
+			self.uiGroceryTreeWidget.setItemSelected(newItem,True)
+			self.recieptItems.append(newItem)		
 
 		self.uiItemTemplate.clear()
 		self.recieptUpdated.emit()
+
+	
+	def updateRecieptFile(self):
+		self.currentReciept = os.path.join(self.RecieptDir,self.uiRecieptSelector.currentText())
+
+		with open(self.currentReciept,'r') as jFile:
+			currentRecieptData = json.load(jFile)
+
+		itemList = []
+		for item in self.recieptItems:
+			itemData = {}
+			itemData['itemName'] = item.text(0)
+			itemData['itemPrice'] = item.text(1)
+			itemData['itemCrv'] = item.text(2)
+			itemData['itemTaxable'] = item.text(3)
+			if itemData['itemTaxable'] == 'True':
+				itemData['tax'] = item.text(4)
+				itemData['itemTotal'] = str((float(itemData['itemPrice']) + float(itemData['itemCrv'])) * (1 + self.taxRate/100))
+			else:
+				itemData['tax'] = '0'
+				itemData['itemTotal'] = str(float(itemData['itemPrice']) + float(itemData['itemCrv']))
+
+			itemData['billTo'] = item.text(6)
+			itemData['itemNote'] = item.itemData['itemNote']
+
+			itemList.append(itemData)
+
+		currentRecieptData['items'] = itemList
+		currentRecieptData['taxRate'] = self.uiTaxRate.value()
+		currentRecieptData['payableTo'] = self.uiPayTo.currentText()
+
+		with open(self.currentReciept,'w') as jFile:
+			json.dump(currentRecieptData, jFile, ensure_ascii=False, indent=4)
 
 
 	def createRootItem(self,itemName):
@@ -345,21 +670,52 @@ class RecieptBuddy_ItemList(QtWidgets.QWidget):
 class RecieptBuddy_BillPreview(QtWidgets.QWidget):
 	def __init__(self):
 		super(RecieptBuddy_BillPreview,self).__init__()
+		self.fileWatcher = QtCore.QFileSystemWatcher()
 
-		self.uiBillGroup = QtWidgets.QGroupBox('Bill Preview')
+		self.recieptParser = RecieptParser.Parser()
+
 		self.uiScrollArea = QtWidgets.QScrollArea()
 		self.lblBill = QtWidgets.QLabel()
+		self.uiItemized = QtWidgets.QCheckBox('Itemized')
 
 		# widget settings
-		self.uiScrollArea.setWidget(self.lblBill)
+		self.uiScrollArea.setWidgetResizable(True)
 
 		self.layMain = QtWidgets.QVBoxLayout()
 		self.layBillGroup = QtWidgets.QVBoxLayout()
 
-		self.layMain.addWidget(self.uiBillGroup)
-		self.layBillGroup.addWidget(self.uiScrollArea)
+		self.layMain.addWidget(self.uiScrollArea)
+		self.layMain.addWidget(self.uiItemized)
 
-		self.setLayout(self.layMain)	
+		self.uiScrollArea.setWidget(self.lblBill)
+		self.setLayout(self.layMain)
+
+		self.uiItemized.stateChanged.connect(self.toggleItimized)
+
+		self.fileWatcher.fileChanged.connect(self.updatePreview)
+
+
+	def clear(self):
+		self.fileWatcher.removePaths(self.fileWatcher.files())
+		self.lblBill.setText('')
+		self.recieptParser.clear()
+
+
+	def toggleItimized(self):
+		self.html = self.recieptParser.generateBill(itemized  = self.uiItemized.isChecked())
+		self.lblBill.setText(self.html)
+
+
+	def setReciept(self, reciept):
+		self.reciept = reciept
+		self.fileWatcher.addPath(reciept)
+		self.updatePreview()
+
+
+	def updatePreview(self):
+		self.recieptParser.setReciept(self.reciept)
+		self.html = self.recieptParser.generateBill(itemized = self.uiItemized.isChecked())
+		self.lblBill.setText(self.html)
 
 
 
@@ -372,18 +728,21 @@ class RecieptBuddy_UI(QtWidgets.QMainWindow):
 		self.setWindowTitle('Reciept Buddy!')
 		self.resize(900,800)
 
+
 		self.uiCentralWidget = QtWidgets.QWidget()
 
 		self.uiSplitter = QtWidgets.QSplitter()
-		self.uiItemList = RecieptBuddy_ItemList()
+		self.uiItemList = RecieptBuddy_RecieptManager()
 		self.uiBillPreview = RecieptBuddy_BillPreview()
-		self.uiGenerateItimized = QtWidgets.QPushButton('Generate Itemized Reciept')
-		self.uiGenerateBill = QtWidgets.QPushButton('Generate Group Bill')
+		self.uiExportBill = QtWidgets.QPushButton('Export Bill')
 
 		# widgetSettings
 		self.uiSplitter.setOrientation(QtCore.Qt.Vertical)
 		self.uiSplitter.addWidget(self.uiItemList)
 		self.uiSplitter.addWidget(self.uiBillPreview)
+		self.uiSplitter.setStyleSheet("QSplitter::handle{background: rgb(42, 42, 42);}")
+		self.uiSplitter.setHandleWidth(12)
+		self.uiExportBill.setEnabled(False)
 
 		# LayoutGeneration
 		self.layMain = QtWidgets.QVBoxLayout()
@@ -394,18 +753,42 @@ class RecieptBuddy_UI(QtWidgets.QMainWindow):
 		self.layMain.addLayout(self.layOperators)
 
 		self.layOperators.addStretch()
-		self.layOperators.addWidget(self.uiGenerateItimized)
-		self.layOperators.addWidget(self.uiGenerateBill)
+		self.layOperators.addWidget(self.uiExportBill)
 
 		# Layout Assignment
 		self.uiCentralWidget.setLayout(self.layMain)
 
 		self.setCentralWidget(self.uiCentralWidget)
 
-		self.uiItemList.recieptUpdated.connect(self.updateBillPreview)
+		self.uiItemList.recieptOpened.connect(self.recieptUpdated)
+		self.uiExportBill.clicked.connect(self.exportHTML)
+		# self.uiItemList.recieptUpdated.connect(self.recieptUpdated)
 
-	def updateBillPreview(self):
-		print 'updating'
+
+	def recieptUpdated(self):
+		reciept = self.uiItemList.currentReciept
+
+		if reciept is None:
+			self.uiExportBill.setEnabled(False)
+			self.uiBillPreview.clear()
+
+		else:
+			if os.path.isfile(reciept):
+				self.uiExportBill.setEnabled(True)
+				self.uiBillPreview.setReciept(reciept)
+
+	def exportHTML(self):
+		exportDir = os.path.dirname(self.uiItemList.currentReciept)
+		destFile = os.path.join(exportDir,'invoice.html')
+
+		file1 = open(destFile, "w")
+
+		file1.writelines(self.uiBillPreview.html)
+
+		file1.close()
+
+		os.startfile(destFile)
+
 
 
 class RecieptBuddy(RecieptBuddy_UI):
@@ -417,6 +800,21 @@ class RecieptBuddy(RecieptBuddy_UI):
 ################################################################################
 # Unit Testing
 ################################################################################
+def unitTest_SpinBox():
+	app = QtWidgets.QApplication(sys.argv)
+
+
+	testDialog = QtWidgets.QDialog()
+	layTest = QtWidgets.QHBoxLayout()
+	layTest.addWidget(MoneySpinner())
+	testDialog.setLayout(layTest)
+
+	ex = testDialog
+	StyleUtils.setStyleSheet(ex)
+	ex.show()
+	sys.exit(app.exec_())
+
+
 def unitTest_Main():
     app = QtWidgets.QApplication(sys.argv)
     ex = RecieptBuddy()
@@ -427,3 +825,4 @@ def unitTest_Main():
 
 if __name__ == '__main__':
 	unitTest_Main()
+	# unitTest_SpinBox()
