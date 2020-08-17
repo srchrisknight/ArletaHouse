@@ -1,4 +1,5 @@
-import os,sys,pprint,json
+import os,sys,pprint,json,time,datetime
+from shutil import copyfile
 from inspect import getsourcefile
 sys.path.append(os.path.dirname(os.path.abspath(getsourcefile(lambda:0))))
 sys.path.append(os.path.join(os.environ.get('ArletaHouse'),'site-packages'))
@@ -68,17 +69,12 @@ class GroceryTreeItem(QtWidgets.QTreeWidgetItem):
 
 
 	def updateTotal(self):
-		print 'updating'
 		price = float(self.itemData['itemPrice'])
 		crv = float(self.itemData['itemCrv'])
 
 		taxRate = self.parentWidget.taxRate
-		print '{} taxible: {}'.format(self.itemData['itemName'],self.itemData['itemTaxable'])
 		if str(self.itemData['itemTaxable']) == 'True':
-			print 'running'
 			taxMultiplier = 1 + (taxRate/100.0)
-			print taxMultiplier
-
 
 			total = (price + crv) * taxMultiplier
 			tax = total - (price + crv)
@@ -88,9 +84,6 @@ class GroceryTreeItem(QtWidgets.QTreeWidgetItem):
 			total = price + crv
 			self.setText(5,str(total))
 			self.setText(4,str(0))
-
-
-
 
 
 ################################################################################
@@ -166,6 +159,7 @@ class RecieptCreator(QtWidgets.QDialog):
 		self.createClicked.emit(data)
 		self.accept()
 
+
 class ItemEditorDialog(QtWidgets.QDialog):
 	def __init__(self,**kwargs):
 		super(ItemEditorDialog,self).__init__(parent = kwargs.get('parent'))
@@ -209,6 +203,7 @@ class ItemEditorDialog(QtWidgets.QDialog):
 		self.parent().removeItem(listItem = self.listItem)
 		self.accept()
 
+
 class NoteEditor(QtWidgets.QDialog):
 	def __init__(self,**kwargs):
 		super(NoteEditor,self).__init__(parent = kwargs.get('parent'))
@@ -244,6 +239,7 @@ class NoteEditor(QtWidgets.QDialog):
 		# signals
 		self.uiCancel.clicked.connect(self.reject)
 		self.uiCommit.clicked.connect(self.updateNote)
+
 
 	def updateNote(self):
 		self.parent().setNote(self.uiNote.toPlainText())
@@ -387,6 +383,7 @@ class RecieptBuddy_RecieptManager(QtWidgets.QWidget):
 		self.taxRate = 9.5
 		self.recieptItems = []
 		self.currentItem = None
+		self.lastBackup = datetime.datetime.now()
 
 		# data
 		self.RecieptDir = os.path.join(os.environ.get('ArletaHouse'),'tools','recieptBuddy','source','lib','reciepts')
@@ -500,10 +497,14 @@ class RecieptBuddy_RecieptManager(QtWidgets.QWidget):
 		elif self.uiRecieptSelector.currentText() == '':
 			self.uiTemplateGroup.setEnabled(False)
 			self.currentReciept = None
+			self.uiTaxRate.setEnabled(False)
+			self.uiPayTo.setEnabled(False)
 
 
 		else:
 			self.uiTemplateGroup.setEnabled(True)
+			self.uiTaxRate.setEnabled(True)
+			self.uiPayTo.setEnabled(True)			
 
 			with open(self.currentReciept,'r') as jFile:
 				data = json.load(jFile)
@@ -658,6 +659,8 @@ class RecieptBuddy_RecieptManager(QtWidgets.QWidget):
 		currentRecieptData['taxRate'] = self.uiTaxRate.value()
 		currentRecieptData['payableTo'] = self.uiPayTo.currentText()
 
+		self.createRecieptBackup()
+
 		with open(self.currentReciept,'w') as jFile:
 			json.dump(currentRecieptData, jFile, ensure_ascii=False, indent=4)
 
@@ -665,6 +668,65 @@ class RecieptBuddy_RecieptManager(QtWidgets.QWidget):
 	def createRootItem(self,itemName):
 		newTreeRoot = QtWidgets.QTreeWidgetItem(self.uiGroceryTreeWidget,[itemName])
 		self.rootItems[itemName] = newTreeRoot
+
+
+	def createRecieptBackup(self, force = False):
+		makeBackup = True
+
+		t = os.path.getmtime(self.currentReciept)
+		recieptDateTime = datetime.datetime.fromtimestamp(t)
+		
+		if (datetime.datetime.now() - self.lastBackup).seconds < 120:
+			makeBackup = False
+
+		print 'Time Since Backup: {}'.format(str((datetime.datetime.now() - self.lastBackup).seconds))
+
+		if force:
+			makeBackup = True
+
+		if makeBackup:
+			self.lastBackup = datetime.datetime.now()
+			fileBackupDir = os.path.join(self.RecieptDir,'_bak')
+			if not os.path.isdir(fileBackupDir):
+				os.makedirs(fileBackupDir)
+
+			# iterator = 0
+			# for file in os.listdir(fileBackupDir):
+			# 	fileIterator = file.split('.')[0].split('_')[-1]
+			# 	if fileIterator.isdigit():
+			# 		if int(fileIterator) >= iterator:
+			# 			iterator = int(fileIterator) + 1
+			# 			if iterator > 10:
+			# 				iterator = 0
+
+			newestBackupTime = 10000
+			newestFile = None
+			for file in os.listdir(fileBackupDir):
+				if file.split('.')[0].split('_')[-1].isdigit():
+					fileEditTime = os.path.getmtime(os.path.join(fileBackupDir,file))
+					fileDateTime = datetime.datetime.fromtimestamp(fileEditTime)
+
+					fileAge = (datetime.datetime.now() - fileDateTime).seconds
+
+					if fileAge < newestBackupTime:
+						newestBackupTime = fileAge
+						newestFile = file
+
+			if newestFile is None:
+				backupVersion = 0
+			else:
+				backupVersion = int(newestFile.split('.')[0].split('_')[-1]) + 1
+				if backupVersion > 10:
+					backupVersion = 0
+
+			backupName = os.path.basename(self.currentReciept).split('.')[0] + '_bak_{}'.format('%02d' % backupVersion)
+			backupFile = os.path.join(fileBackupDir,backupName + '.reciept')
+			
+			print 'Making Backup: {}'.format(backupName) 
+			
+			copyfile(self.currentReciept,backupFile)
+
+		
 
 
 class RecieptBuddy_BillPreview(QtWidgets.QWidget):
