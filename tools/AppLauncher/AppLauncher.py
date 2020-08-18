@@ -50,7 +50,7 @@ class AppWidget(QtWidgets.QWidget):
 
 
 	def launchApp(self):
-		tokenData = {'<USER>':getpass.getuser()}
+		tokenData = {'<USER>':getpass.getuser(),'<ArletaHouse>':os.environ.get('ArletaHouse')}
 
 		profile = self.uiProfile.currentText()
 		appPath = self.appData['profiles'][profile]['filepath']
